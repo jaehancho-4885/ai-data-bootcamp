@@ -1,7 +1,7 @@
 import requests
-import xml.etree.ElementTree as ET
+from bs4 import BeautifulSoup
 
-OC = "test"  # 승인 나면 johnny4885로 교체
+OC = "test"  # 승인 나면 개인 계정 OC로 교체
 
 law_names = ["형법", "국가배상법", "민법"]  # 필요시 형사소송법도 (송치결정서 작성 근거)
 
@@ -9,16 +9,21 @@ search_url = "http://www.law.go.kr/DRF/lawSearch.do"
 service_url = "http://www.law.go.kr/DRF/lawService.do"
 
 
+def _text(node, default=None):
+    return node.get_text(strip=True) if node else default
+
+
 def find_exact_law(name):
-    params = {"OC": OC, "target": "eflaw", "type": "XML", "query": name}
+    # display=100: 기본 20건이라 인기 법령은 뒤 페이지에 정확일치 항목이 있어 늘려서 조회
+    params = {"OC": OC, "target": "eflaw", "type": "XML", "query": name, "display": 100}
     resp = requests.get(search_url, params=params, timeout=10)
-    root = ET.fromstring(resp.content)
+    soup = BeautifulSoup(resp.content, features="xml")
 
-    candidates = [law.findtext("법령명한글", "").strip() for law in root.findall("law")]
+    laws = soup.find_all("law")
+    candidates = [_text(law.find("법령명한글"), "") for law in laws]
 
-    for law in root.findall("law"):
-        law_name = law.findtext("법령명한글", "").strip()
-        if law_name == name:
+    for law in laws:
+        if _text(law.find("법령명한글"), "") == name:
             return law, candidates
     return None, candidates
 
@@ -26,16 +31,16 @@ def find_exact_law(name):
 def fetch_articles(mst):
     params = {"OC": OC, "target": "eflaw", "MST": mst, "type": "XML"}
     resp = requests.get(service_url, params=params, timeout=10)
-    root = ET.fromstring(resp.content)
+    soup = BeautifulSoup(resp.content, features="xml")
 
     articles = []
-    for jo in root.iter("조문단위"):
-        if jo.findtext("조문여부") != "조문":  # 장/절 제목 등 skip
+    for jo in soup.find_all("조문단위"):
+        if _text(jo.find("조문여부")) != "조문":  # 장/절 제목 등 skip
             continue
         articles.append({
-            "조번호": jo.findtext("조문번호"),
-            "조제목": jo.findtext("조문제목"),
-            "조문내용": jo.findtext("조문내용"),
+            "조번호": _text(jo.find("조문번호")),
+            "조제목": _text(jo.find("조문제목")),
+            "조문내용": _text(jo.find("조문내용")),
         })
     return articles
 
@@ -49,7 +54,7 @@ for name in law_names:
         print(f"'{name}' 정확 일치 항목을 못 찾음. 검색된 후보 이름들: {candidates}")
         continue
 
-    mst = law.findtext("법령일련번호")
+    mst = _text(law.find("법령일련번호"))
     print(f"{name} MST: {mst}")
 
     articles = fetch_articles(mst)
